@@ -1,0 +1,18 @@
+{
+  "name": "verisense-symbiotic-middleware",
+  "version": "1.0.0",
+  "description": "The solidity implementation of Verisense-Symbiotic middleware on EVM compatible blockchains.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "devDependencies": {
+    "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "hardhat": "^2.22.15"
+  },
+  "dependencies": {
+    "@openzeppelin/contracts": "^5.0.0",
+    "@openzeppelin/contracts-upgradeable": "^5.0.2",
+    "symbiotic": "git+https://github.com/symbioticfi/core"
+  }
+}
