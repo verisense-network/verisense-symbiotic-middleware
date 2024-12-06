@@ -8,11 +8,13 @@
   },
   "devDependencies": {
     "@nomicfoundation/hardhat-toolbox": "^5.0.0",
+    "@openzeppelin/hardhat-upgrades": "^3.1.1",
     "hardhat": "^2.22.15"
   },
   "dependencies": {
     "@openzeppelin/contracts": "^5.0.0",
     "@openzeppelin/contracts-upgradeable": "^5.0.2",
-    "symbiotic": "git+https://github.com/symbioticfi/core"
+    "symbiotic": "git+https://github.com/symbioticfi/core",
+    "symbiotic-rewards": "git+https://github.com/symbioticfi/rewards"
   }
 }

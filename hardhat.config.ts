@@ -1,5 +1,10 @@
 import { HardhatUserConfig } from "hardhat/config";
 import "@nomicfoundation/hardhat-toolbox";
+import "@nomicfoundation/hardhat-ignition-ethers";
+import "@openzeppelin/hardhat-upgrades";
+import { vars } from "hardhat/config";
+
+const DEPLOY_PRI_KEY = vars.get("DEPLOY_PRI_KEY");
 
 const config: HardhatUserConfig = {
   solidity: {
@@ -12,6 +17,12 @@ const config: HardhatUserConfig = {
       viaIR: true,
     },
   },
+  networks: {
+    holesky: {
+      url: `https://ethereum-holesky-rpc.publicnode.com`,
+      accounts: [DEPLOY_PRI_KEY],
+    }
+  }
 };
 
 export default config;

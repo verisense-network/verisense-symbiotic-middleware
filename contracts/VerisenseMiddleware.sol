@@ -4,10 +4,11 @@ pragma solidity 0.8.25;
 import {Time} from "@openzeppelin/contracts/utils/types/Time.sol";
 import {Ownable} from "@openzeppelin/contracts/access/Ownable.sol";
 import {EnumerableMap} from "@openzeppelin/contracts/utils/structs/EnumerableMap.sol";
+import {SafeERC20, IERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {OwnableUpgradeable} from "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import {Initializable} from "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import {UUPSUpgradeable} from "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
-
+import {MerkleProof} from "@openzeppelin/contracts/utils/cryptography/MerkleProof.sol";
 import {IRegistry} from "symbiotic/src/interfaces/common/IRegistry.sol";
 import {IEntity} from "symbiotic/src/interfaces/common/IEntity.sol";
 import {IVault} from "symbiotic/src/interfaces/vault/IVault.sol";
@@ -18,9 +19,11 @@ import {IEntity} from "symbiotic/src/interfaces/common/IEntity.sol";
 import {ISlasher} from "symbiotic/src/interfaces/slasher/ISlasher.sol";
 import {IVetoSlasher} from "symbiotic/src/interfaces/slasher/IVetoSlasher.sol";
 import {Subnetwork} from "symbiotic/src/contracts/libraries/Subnetwork.sol";
-
+import {IDefaultOperatorRewards} from "symbiotic-rewards/src/interfaces/defaultOperatorRewards/IDefaultOperatorRewards.sol";
+import {IDefaultStakerRewards} from "symbiotic-rewards/src/interfaces/defaultStakerRewards/IDefaultStakerRewards.sol";
 import {KeyRegistry32} from "./KeyRegistry32.sol";
 import {MapWithTimeData} from "./libraries/MapWithTimeData.sol";
+
 
 contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, OwnableUpgradeable {
     using EnumerableMap for EnumerableMap.AddressToUintMap;
@@ -49,15 +52,19 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
     error UnknownSlasherType();
 
     struct ValidatorData {
+        address operator;
         uint256 stake;
         bytes32 key;
     }
 
     address public  NETWORK;
     address public  OPERATOR_REGISTRY;
-    address public  VAULT_REGISTRY;
+    address public  VAULT_FACTORY;
     address public  OPERATOR_NET_OPTIN;
     address public  OWNER;
+    address public  REWARD_ERC20_TOKEN;
+    address public  OPERATOR_REWARD_CONTRACT;
+    address public  STAKER_REWARD_CONTRACT;
     uint48 public  EPOCH_DURATION;
     uint48 public  SLASHING_WINDOW;
     uint48 public  START_TIME;
@@ -86,7 +93,7 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
     function initialize(
         address _network,
         address _operatorRegistry,
-        address _vaultRegistry,
+        address _vaultFactory,
         address _operatorNetOptin,
         uint48 _epochDuration,
         uint48 _slashingWindow
@@ -98,7 +105,7 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
         EPOCH_DURATION = _epochDuration;
         NETWORK = _network;
         OPERATOR_REGISTRY = _operatorRegistry;
-        VAULT_REGISTRY = _vaultRegistry;
+        VAULT_FACTORY = _vaultFactory;
         OPERATOR_NET_OPTIN = _operatorNetOptin;
         SLASHING_WINDOW = _slashingWindow;
         subnetworksCnt = 1;
@@ -141,7 +148,6 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
         if (!operators.contains(operator)) {
             revert OperatorNotRegistred();
         }
-
         updateKey(operator, key);
     }
 
@@ -168,7 +174,7 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
             revert VaultAlreadyRegistred();
         }
 
-        if (!IRegistry(VAULT_REGISTRY).isEntity(vault)) {
+        if (!IRegistry(VAULT_FACTORY).isEntity(vault)) {
             revert NotVault();
         }
 
@@ -266,7 +272,7 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
 
             uint256 stake = getOperatorStake(operator, epoch);
 
-            validatorsData[valIdx++] = ValidatorData(stake, key);
+            validatorsData[valIdx++] = ValidatorData(operator, stake, key);
         }
 
         // shrink array to skip unused slots
@@ -274,12 +280,6 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
         assembly {
             mstore(validatorsData, valIdx)
         }
-    }
-
-    function submission(bytes memory payload, bytes32[] memory signatures) public updateStakeCache(getCurrentEpoch()) {
-        // validate signatures
-        // validate payload
-        // process payload
     }
 
     // just for example, our devnets don't support slashing
@@ -390,4 +390,88 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
             revert UnknownSlasherType();
         }
     }
+
+    function set_reward_information(address token, address operatorRewards, address stakerRewards) external onlyOwner {
+        REWARD_ERC20_TOKEN = token;
+        OPERATOR_REWARD_CONTRACT = operatorRewards;
+        STAKER_REWARD_CONTRACT = stakerRewards;
+    }
+
+    function rewardOperators(
+        uint256 amount,
+        bytes32 root
+    ) external onlyOwner {
+        IDefaultOperatorRewards(OPERATOR_REWARD_CONTRACT).distributeRewards(NETWORK, REWARD_ERC20_TOKEN, amount, root);
+    }
+
+    function rewardStakers(
+        address token,
+        uint256 amount
+    ) external onlyOwner {
+        IDefaultStakerRewards(STAKER_REWARD_CONTRACT).distributeRewards(NETWORK, token, amount, bytes(""));
+    }
+
+    using SafeERC20 for IERC20;
+
+    bytes32 public root;
+
+    uint256 public balance;
+
+    mapping(address account => uint256 amount) public claimed;
+
+    function _distributeRewards(uint256 amount, bytes32 root_) internal  {
+        if (amount > 0) {
+            uint256 balanceBefore = IERC20(REWARD_ERC20_TOKEN).balanceOf(address(this));
+            IERC20(REWARD_ERC20_TOKEN).safeTransferFrom(msg.sender, address(this), amount);
+            amount = IERC20(REWARD_ERC20_TOKEN).balanceOf(address(this)) - balanceBefore;
+
+            if (amount == 0) {
+                revert InsufficientTransfer();
+            }
+
+            balance += amount;
+        }
+        root = root_;
+    }
+
+    function claimRewards(
+        address recipient,
+        uint256 totalClaimable,
+        bytes32[] calldata proof
+    ) external returns (uint256 amount) {
+        bytes32 root_ = root;
+        if (root_ == bytes32(0)) {
+            revert RootNotSet();
+        }
+        if (
+            !MerkleProof.verifyCalldata(
+            proof, root_, keccak256(bytes.concat(keccak256(abi.encode(msg.sender, "symbiotic", totalClaimable))))
+        )
+        ) {
+            revert InvalidProof();
+        }
+
+        uint256 claimed_ = claimed[msg.sender];
+        if (totalClaimable <= claimed_) {
+            revert InsufficientTotalClaimable();
+        }
+
+        amount = totalClaimable - claimed_;
+
+        if (amount > balance) {
+            revert InsufficientBalance();
+        }
+
+        balance = balance - amount;
+
+        claimed[msg.sender] = totalClaimable;
+        IERC20(REWARD_ERC20_TOKEN).safeTransfer(recipient, amount);
+    }
+
+    error InsufficientBalance();
+    error InsufficientTotalClaimable();
+    error InsufficientTransfer();
+    error InvalidProof();
+    error NotNetworkMiddleware();
+    error RootNotSet();
 }
