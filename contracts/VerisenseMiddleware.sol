@@ -62,9 +62,6 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
     address public  VAULT_FACTORY;
     address public  OPERATOR_NET_OPTIN;
     address public  OWNER;
-    address public  REWARD_ERC20_TOKEN;
-    address public  OPERATOR_REWARD_CONTRACT;
-    address public  STAKER_REWARD_CONTRACT;
     uint48 public  EPOCH_DURATION;
     uint48 public  SLASHING_WINDOW;
     uint48 public  START_TIME;
@@ -78,6 +75,10 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
     mapping(uint48 => mapping(address => uint256)) public operatorStakeCache;
     EnumerableMap.AddressToUintMap private operators;
     EnumerableMap.AddressToUintMap private vaults;
+
+    address public  REWARD_ERC20_TOKEN;
+    address public  OPERATOR_REWARD_CONTRACT;
+    address public  STAKER_REWARD_CONTRACT;
 
     modifier updateStakeCache(uint48 epoch) {
         if (!totalStakeCached[epoch]) {
@@ -251,7 +252,8 @@ contract VerisenseMiddleware is KeyRegistry32, Initializable, UUPSUpgradeable, O
         return _calcTotalStake(epoch);
     }
 
-    function getValidatorSet(uint48 epoch) public view returns (ValidatorData[] memory validatorsData) {
+    function getValidatorSet() public view returns (ValidatorData[] memory validatorsData) {
+        uint48 epoch = getCurrentEpoch();
         uint48 epochStartTs = getEpochStartTs(epoch);
 
         validatorsData = new ValidatorData[](operators.length());
